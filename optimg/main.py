@@ -102,9 +102,8 @@ class OptimizeImage:
             total_size_before += size_before
             try:
                 output = subprocess.check_output([self.jpegtran] + JPEGTRAN_CMDLINE + [str(img)])
-            except subprocess.CalledProcessError as e:
-                self.log.warn("failed jpegtran on %s. %s",
-                               str(img), e.output.decode('utf-8'))
+            except subprocess.CalledProcessError:
+                self.log.warn("failed jpegtran on %s", str(img))
                 total_size_after += size_before
                 continue
             size_after = len(output)

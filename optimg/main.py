@@ -24,7 +24,7 @@ import os
 from atomicwrites import atomic_write
 
 JPEGTRAN = "/opt/mozjpeg/bin/jpegtran"
-JPEGTRAN_CMDLINE = [JPEGTRAN, "-copy", "none", "-opt", "-prog"]
+JPEGTRAN_CMDLINE = ["-copy", "none", "-opt", "-prog"]
 
 class OptimizeImage:
 
@@ -38,10 +38,17 @@ class OptimizeImage:
         parser.add_argument('-j', '--jpegtran', action="store",
                             default=JPEGTRAN, help="jpegtran binary path")
         args = parser.parse_args()
+        self.jpegtran = args.jpegtran
         self.path = pathlib.Path(args.path)
         logging.basicConfig(level=(logging.DEBUG if args.verbose else logging.INFO))
 
     def run(self):
+
+        jpegtran = pathlib.Path(self.jpegtran)
+        if not jpegtran.exists():
+            print('jpegtran not found in {0.jpegtran}'.format(self))
+            return
+
         total_size_before = 0
         total_size_after = 0
 
@@ -50,7 +57,8 @@ class OptimizeImage:
             size_before = stat.st_size
             self.log.debug("processing %s (filesize=%d)", str(img), size_before)
             total_size_before += size_before
-            p = subprocess.run(JPEGTRAN_CMDLINE + [str(img)], stdout=subprocess.PIPE,
+            p = subprocess.run([self.jpegtran] + JPEGTRAN_CMDLINE + [str(img)],
+                               stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT)
             size_after = len(p.stdout)
             if stat.st_size <= size_after and False:

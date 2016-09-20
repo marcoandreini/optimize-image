@@ -57,10 +57,14 @@ class OptimizeImage:
             size_before = stat.st_size
             self.log.debug("processing %s (filesize=%d)", str(img), size_before)
             total_size_before += size_before
-            p = subprocess.run([self.jpegtran] + JPEGTRAN_CMDLINE + [str(img)],
-                               stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT)
-            size_after = len(p.stdout)
+            try:
+                output = subprocess.check_output([self.jpegtran] + JPEGTRAN_CMDLINE + [str(img)])
+            except subprocess.CalledProcessError as e:
+                self.log.warn("failed jpegtran on %s. %s",
+                               str(img), e.output.decode('utf-8'))
+                total_size_after += size_before
+                continue
+            size_after = len(output)
             if stat.st_size <= size_after and False:
                 self.log.debug("skipping %s, optimization not applicable.",
                                str(img))
@@ -68,7 +72,7 @@ class OptimizeImage:
                 total_size_after += size_before
                 continue
             with atomic_write(str(img), mode='wb', overwrite=True) as f:
-                f.write(p.stdout)
+                f.write(output)
                 # restore permission and ownership:
                 os.chown(f.name, stat.st_uid, stat.st_gid)
                 os.chmod(f.name, stat.st_mode)

@@ -22,9 +22,13 @@ import pathlib
 import os
 
 from atomicwrites import atomic_write
+from pwd import getpwnam
+from grp import getgrnam
+
 
 JPEGTRAN = "/opt/mozjpeg/bin/jpegtran"
 JPEGTRAN_CMDLINE = ["-copy", "none", "-opt", "-prog"]
+
 
 class OptimizeImage:
 
@@ -33,14 +37,53 @@ class OptimizeImage:
     def __init__(self):
         parser = argparse.ArgumentParser(description='magentoimagecleanup')
         parser.add_argument('-v', '--verbose', action='store_true', default=False)
-        parser.add_argument('path', metavar='IMAGESPATH',
-                            help='base path of images')
         parser.add_argument('-j', '--jpegtran', action="store",
                             default=JPEGTRAN, help="jpegtran binary path")
+        parser.add_argument('-o', '--owner', action="store", type=self.to_uid,
+                            help="file owner")
+        parser.add_argument('-g', '--group', action="store", type=self.to_gid,
+                            help="file group")
+        parser.add_argument('-m', '--mode', action="store", type=self.to_mode,
+                            help="file mode in octal format")
+        parser.add_argument('path', metavar='IMAGESPATH',
+                            help='base path of images')
         args = parser.parse_args()
         self.jpegtran = args.jpegtran
+        self.owner = args.owner
+        self.group = args.group
+        self.mode = args.mode
         self.path = pathlib.Path(args.path)
         logging.basicConfig(level=(logging.DEBUG if args.verbose else logging.INFO))
+
+    @staticmethod
+    def to_uid(value):
+        if value is None:
+            return None
+        try:
+            return getpwnam(value).pw_uid
+        except KeyError as e:
+            raise argparse.ArgumentTypeError(e)
+
+    @staticmethod
+    def to_gid(value):
+        if value is None:
+            return None
+        try:
+            return getgrnam(value).gr_gid
+        except KeyError as e:
+            raise argparse.ArgumentTypeError(e)
+
+    @staticmethod
+    def to_mode(value):
+        if value is None:
+            return None
+        try:
+            mode = int(value, 8)
+        except ValueError:
+            raise argparse.ArgumentTypeError("invalid mode, must be")
+        if mode < 0 or mode > 0o777:
+            raise argparse.ArgumentTypeError("invalid mode")
+        return mode
 
     def run(self):
 
@@ -71,11 +114,14 @@ class OptimizeImage:
                 # using previous size
                 total_size_after += size_before
                 continue
+            uid = self.owner if self.owner else stat.st_uid
+            gid = self.group if self.group else stat.st_gid
+            mode = self.mode if self.mode else stat.st_mode
             with atomic_write(str(img), mode='wb', overwrite=True) as f:
                 f.write(output)
                 # restore permission and ownership:
-                os.chown(f.name, stat.st_uid, stat.st_gid)
-                os.chmod(f.name, stat.st_mode)
+                os.chown(f.name, uid, gid)
+                os.chmod(f.name, mode)
             self.log.debug("successfully optimized %s: filesize=%d (%.2f%%)",
                            str(img), size_after,
                            (size_after - size_before) * 100.0 / size_before)

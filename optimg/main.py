@@ -116,15 +116,20 @@ class OptimizeImage:
             uid = self.owner if self.owner else stat.st_uid
             gid = self.group if self.group else stat.st_gid
             mode = self.mode if self.mode else stat.st_mode
-            with atomic_write(str(img), mode='wb', overwrite=True) as f:
-                f.write(output)
-                # restore permission and ownership:
-                os.chown(f.name, uid, gid)
-                os.chmod(f.name, mode)
-            self.log.debug("successfully optimized %s: filesize=%d (%.2f%%)",
-                           str(img), size_after,
-                           (size_after - size_before) * 100.0 / size_before)
-            total_size_after += size_after
+            try:
+                with atomic_write(str(img), mode='wb', overwrite=True) as f:
+                    f.write(output)
+                    # restore permission and ownership:
+                    os.chown(f.name, uid, gid)
+                    os.chmod(f.name, mode)
+
+                self.log.debug("successfully optimized %s: filesize=%d (%.2f%%)",
+                               str(img), size_after,
+                               (size_after - size_before) * 100.0 / size_before)
+                total_size_after += size_after
+            except OSError as e:
+                self.log.warn("skipping %s: %s", str(img), e)
+                total_size_after += size_before
 
         self.log.debug("total jpeg size: %d => %d (%.2f%%)",
                       total_size_before,

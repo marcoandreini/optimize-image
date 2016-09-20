@@ -108,7 +108,7 @@ class OptimizeImage:
                 total_size_after += size_before
                 continue
             size_after = len(output)
-            if stat.st_size <= size_after and False:
+            if stat.st_size <= size_after:
                 self.log.debug("skipping %s, optimization not applicable.",
                                str(img))
                 # using previous size

@@ -29,7 +29,7 @@ from grp import getgrnam
 
 
 JPEGTRAN = "/opt/mozjpeg/bin/compressor"
-JPEGTRAN_CMDLINE = "-copy none -opt -prog"
+JPEGTRAN_CMDLINE = "-copy none -opt -prog {image}"
 OPTIMIZED_AT = "user.optimized_at"
 
 

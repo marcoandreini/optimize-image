@@ -21,13 +21,16 @@ import subprocess
 import pathlib
 import os
 
+from time import time
+from xattr import getxattr, setxattr
 from atomicwrites import atomic_write
 from pwd import getpwnam
 from grp import getgrnam
 
 
-JPEGTRAN = "/opt/mozjpeg/bin/jpegtran"
-JPEGTRAN_CMDLINE = ["-copy", "none", "-opt", "-prog"]
+JPEGTRAN = "/opt/mozjpeg/bin/compressor"
+JPEGTRAN_CMDLINE = "-copy none -opt -prog"
+OPTIMIZED_AT = "user.optimized_at"
 
 
 class OptimizeImage:
@@ -37,8 +40,12 @@ class OptimizeImage:
     def __init__(self):
         parser = argparse.ArgumentParser(description='magentoimagecleanup')
         parser.add_argument('-v', '--verbose', action='store_true', default=False)
-        parser.add_argument('-j', '--jpegtran', action="store",
-                            default=JPEGTRAN, help="jpegtran binary path")
+        parser.add_argument('-c', '--compressor', action='store',
+                            default=JPEGTRAN,
+                            help="compressor (like compressor) binary path")
+        parser.add_argument('-l', '--compressor-args', action='store',
+                            default=JPEGTRAN_CMDLINE, type=self.compressor_arguments,
+                            help='compressor command line, must contain {image} parameter')
         parser.add_argument('-o', '--owner', action="store", type=self.to_uid,
                             help="file owner")
         parser.add_argument('-g', '--group', action="store", type=self.to_gid,
@@ -48,12 +55,23 @@ class OptimizeImage:
         parser.add_argument('path', metavar='IMAGESPATH',
                             help='base path of images')
         args = parser.parse_args()
-        self.jpegtran = args.jpegtran
+        self.compressor = args.compressor
+        self.compressor_args = args.compressor_args
         self.owner = args.owner
         self.group = args.group
         self.mode = args.mode
         self.path = pathlib.Path(args.path)
         logging.basicConfig(level=(logging.DEBUG if args.verbose else logging.INFO))
+
+    @staticmethod
+    def compressor_arguments(value):
+        if value is None:
+            return None
+        try:
+            value.format(image='test')
+            return value
+        except (KeyError, IndexError) as e:
+            raise argparse.ArgumentTypeError(e)
 
     @staticmethod
     def to_uid(value):
@@ -85,11 +103,22 @@ class OptimizeImage:
             raise argparse.ArgumentTypeError("invalid mode")
         return mode
 
+    @staticmethod
+    def set_optimized_at(filename):
+        setxattr(filename, OPTIMIZED_AT, '%3.f' % time())
+
+    @staticmethod
+    def get_optimized_at(filename):
+        try:
+            return float(getxattr(filename, OPTIMIZED_AT))
+        except OSError:
+            return None
+
     def run(self):
 
-        jpegtran = pathlib.Path(self.jpegtran)
-        if not jpegtran.exists():
-            print('jpegtran not found in {0.jpegtran}'.format(self))
+        compressor = pathlib.Path(self.compressor)
+        if not compressor.exists():
+            print('compressor not found in {0.compressor}'.format(self))
             return
 
         total_size_before = 0
@@ -97,17 +126,23 @@ class OptimizeImage:
 
         for img in self.path.glob("**/*.jpg"):
             stat = img.stat()
+            optimized_at = self.get_optimized_at(str(img)) or 0
+            if optimized_at >= stat.st_mtime:
+                self.log.debug('skipping %s, image was already optimized.', str(img))
+                continue
             size_before = stat.st_size
             self.log.debug("processing %s (filesize=%d)", str(img), size_before)
             total_size_before += size_before
             try:
-                output = subprocess.check_output([self.jpegtran] + JPEGTRAN_CMDLINE + [str(img)])
+                output = subprocess.check_output([self.compressor] +
+                                                 self.compressor_args.format(image=str(img)).split())
             except subprocess.CalledProcessError:
-                self.log.warn("failed jpegtran on %s", str(img))
+                self.log.warn("failed compressor on %s", str(img))
                 total_size_after += size_before
                 continue
             size_after = len(output)
             if stat.st_size <= size_after:
+                self.set_optimized_at(str(img))
                 self.log.debug("skipping %s, optimization not applicable.",
                                str(img))
                 # using previous size
@@ -123,6 +158,7 @@ class OptimizeImage:
                     os.chown(f.name, uid, gid)
                     os.chmod(f.name, mode)
 
+                self.set_optimized_at(str(img))
                 self.log.debug("successfully optimized %s: filesize=%d (%.2f%%)",
                                str(img), size_after,
                                (size_after - size_before) * 100.0 / size_before)

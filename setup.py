@@ -21,7 +21,7 @@ setup(name='optimize-image',
         [console_scripts]
         optimize-image=optimg.main:cli
       ''',
-      install_requires=['atomicwrites>=1.1.5'],
+      install_requires=['atomicwrites>=1.1.5', 'pathlib', 'pyxattr>=0.6.0'],
       classifiers=[
         'Intended Audience :: Developers',
         'Programming Language :: Python',

@@ -18,15 +18,15 @@
 import logging
 import argparse
 import subprocess
-import pathlib
 import os
+import walkdir
 
 from time import time
+from pathlib import Path
 from xattr import getxattr, setxattr
 from atomicwrites import atomic_write
 from pwd import getpwnam
 from grp import getgrnam
-
 
 JPEGTRAN = "/opt/mozjpeg/bin/compressor"
 JPEGTRAN_CMDLINE = "-copy none -opt -prog {image}"
@@ -52,6 +52,10 @@ class OptimizeImage:
                             help="file group")
         parser.add_argument('-m', '--mode', action="store", type=self.to_mode,
                             help="file mode in octal format")
+        parser.add_argument('-x', '--exclude', action="append", default=[],
+                            help='excluded directories')
+        parser.add_argument('-f', '--force', action="store_true", default=False,
+                            help='force optimization without check last optimization date/time')
         parser.add_argument('path', metavar='IMAGESPATH',
                             help='base path of images')
         args = parser.parse_args()
@@ -60,7 +64,9 @@ class OptimizeImage:
         self.owner = args.owner
         self.group = args.group
         self.mode = args.mode
-        self.path = pathlib.Path(args.path)
+        self.path = Path(args.path)
+        self.excludes = args.exclude
+        self.force = args.force
         logging.basicConfig(level=(logging.DEBUG if args.verbose else logging.INFO))
 
     @staticmethod
@@ -116,7 +122,7 @@ class OptimizeImage:
 
     def run(self):
 
-        compressor = pathlib.Path(self.compressor)
+        compressor = Path(self.compressor)
         if not compressor.exists():
             print('compressor not found in {0.compressor}'.format(self))
             return
@@ -124,27 +130,32 @@ class OptimizeImage:
         total_size_before = 0
         total_size_after = 0
 
-        for img in self.path.glob("**/*.jpg"):
+        paths = walkdir.file_paths(walkdir.filtered_walk(str(self.path),
+            depth=0, included_files=['*.jpg', '*.jpeg'],
+            excluded_dirs=self.excludes))
+
+        for path in paths:
+            img = Path(path)
             stat = img.stat()
-            optimized_at = self.get_optimized_at(str(img)) or 0
-            if optimized_at >= stat.st_mtime:
-                self.log.debug('skipping %s, image was already optimized.', str(img))
+            optimized_at = self.get_optimized_at(path) or 0
+            if not self.force and optimized_at >= stat.st_mtime:
+                self.log.debug('skipping %s, image was already optimized.', path)
                 continue
             size_before = stat.st_size
-            self.log.debug("processing %s (filesize=%d)", str(img), size_before)
+            self.log.debug("processing %s (filesize=%d)", path, size_before)
             total_size_before += size_before
             try:
                 output = subprocess.check_output([self.compressor] +
-                                                 self.compressor_args.format(image=str(img)).split())
+                                                 self.compressor_args.format(image=path).split())
             except subprocess.CalledProcessError:
-                self.log.warn("failed compressor on %s", str(img))
+                self.log.warn("failed compressor on %s", path)
                 total_size_after += size_before
                 continue
             size_after = len(output)
             if stat.st_size <= size_after:
-                self.set_optimized_at(str(img))
+                self.set_optimized_at(path)
                 self.log.debug("skipping %s, optimization not applicable.",
-                               str(img))
+                               path)
                 # using previous size
                 total_size_after += size_before
                 continue
@@ -152,25 +163,28 @@ class OptimizeImage:
             gid = self.group if self.group else stat.st_gid
             mode = self.mode if self.mode else stat.st_mode
             try:
-                with atomic_write(str(img), mode='wb', overwrite=True) as f:
+                with atomic_write(path, mode='wb', overwrite=True) as f:
                     f.write(output)
                     # restore permission and ownership:
                     os.chown(f.name, uid, gid)
                     os.chmod(f.name, mode)
 
-                self.set_optimized_at(str(img))
+                self.set_optimized_at(path)
                 self.log.debug("successfully optimized %s: filesize=%d (%.2f%%)",
-                               str(img), size_after,
+                               path, size_after,
                                (size_after - size_before) * 100.0 / size_before)
                 total_size_after += size_after
             except OSError as e:
-                self.log.warn("skipping %s: %s", str(img), e)
+                self.log.warn("skipping %s: %s", path, e)
                 total_size_after += size_before
 
-        self.log.debug("total jpeg size: %d => %d (%.2f%%)",
-                      total_size_before,
-                      total_size_after,
-                      (total_size_after - total_size_before) * 100.0 / total_size_before)
+        if total_size_before > 0:
+            self.log.debug("total jpeg size: %d => %d (%.2f%%)",
+                           total_size_before,
+                           total_size_after,
+                           (total_size_after - total_size_before) * 100.0 / total_size_before)
+        else:
+            self.log.debug('nothing to do.')
 
 
 def cli():

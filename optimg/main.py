@@ -38,7 +38,7 @@ class OptimizeImage:
     log = logging.getLogger("OptimizeImage")
 
     def __init__(self):
-        parser = argparse.ArgumentParser(description='magentoimagecleanup')
+        parser = argparse.ArgumentParser(description='optimize-image')
         parser.add_argument('-v', '--verbose', action='store_true', default=False)
         parser.add_argument('-c', '--compressor', action='store',
                             default=JPEGTRAN,

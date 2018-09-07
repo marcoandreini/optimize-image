@@ -20,6 +20,7 @@ import argparse
 import subprocess
 import os
 import walkdir
+import fasteners
 
 from time import time
 from pathlib import Path
@@ -121,7 +122,13 @@ class OptimizeImage:
             return None
 
     def run(self):
-
+        
+        lock = fasteners.InterProcessLock('/var/lock/optimize-image')
+        locked = lock.acquire(blocking=False)
+        if not locked:
+            self.log.error('another process is in progres... exiting')
+            return
+        
         compressor = Path(self.compressor)
         if not compressor.exists():
             print('compressor not found in {0.compressor}'.format(self))

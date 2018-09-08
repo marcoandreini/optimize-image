@@ -21,6 +21,7 @@ import subprocess
 import os
 import walkdir
 import fasteners
+import pyguetzli
 
 from time import time
 from pathlib import Path
@@ -29,10 +30,7 @@ from atomicwrites import atomic_write
 from pwd import getpwnam
 from grp import getgrnam
 
-JPEGTRAN = "/opt/mozjpeg/bin/compressor"
-JPEGTRAN_CMDLINE = "-copy none -opt -prog {image}"
 OPTIMIZED_AT = "user.optimized_at"
-
 
 class OptimizeImage:
 
@@ -42,10 +40,10 @@ class OptimizeImage:
         parser = argparse.ArgumentParser(description='optimize-image')
         parser.add_argument('-v', '--verbose', action='store_true', default=False)
         parser.add_argument('-c', '--compressor', action='store',
-                            default=JPEGTRAN,
-                            help="compressor (like compressor) binary path")
+                            default=None,
+                            help="compressor binary path, default to (py)guetzli")
         parser.add_argument('-l', '--compressor-args', action='store',
-                            default=JPEGTRAN_CMDLINE, type=self.compressor_arguments,
+                            default=None, type=self.compressor_arguments,
                             help='compressor command line, must contain {image} parameter')
         parser.add_argument('-o', '--owner', action="store", type=self.to_uid,
                             help="file owner")
@@ -57,6 +55,8 @@ class OptimizeImage:
                             help='excluded directories')
         parser.add_argument('-f', '--force', action="store_true", default=False,
                             help='force optimization without check last optimization date/time')
+        parser.add_argument('-t', '--max-execution-time', default=None, type=int,
+                            help='max execution time in minutes')
         parser.add_argument('path', metavar='IMAGESPATH',
                             help='base path of images')
         args = parser.parse_args()
@@ -68,6 +68,8 @@ class OptimizeImage:
         self.path = Path(args.path)
         self.excludes = args.exclude
         self.force = args.force
+        self.max_time = None if args.max_execution_time is None \
+            else time() + args.max_execution_time * 60
         logging.basicConfig(level=(logging.DEBUG if args.verbose else logging.INFO))
 
     @staticmethod
@@ -120,28 +122,49 @@ class OptimizeImage:
             return float(getxattr(filename, OPTIMIZED_AT))
         except OSError:
             return None
+        
+    def compress(self, path):
+        """
+        compress jpeg "path" using internal guetzli or external subprocess
+        
+        """
+        
+        if self.compressor is None:
+            with path.open('rb') as f:
+                input = f.read()
+                return pyguetzli.process_jpeg_bytes(input)
+        else:
+            return subprocess.check_output([self.compressor] +
+                                           self.compressor_args.format(image=path).split())
 
     def run(self):
         
         lock = fasteners.InterProcessLock('/var/lock/optimize-image')
         locked = lock.acquire(blocking=False)
         if not locked:
-            self.log.error('another process is in progres... exiting')
+            self.log.error('another process is in progress... exiting')
             return
         
-        compressor = Path(self.compressor)
-        if not compressor.exists():
-            print('compressor not found in {0.compressor}'.format(self))
-            return
+        if self.compressor:
+            self.compressor = Path(self.compressor)
+            if not self.compressor.exists():
+                self.log.error('compressor not found in {0.compressor}'.format(self))
+                return
+            self.log.debug('using {0.compressor}'.format(self))
+        else:
+            self.log.debug('using internal pyguetzli.')
 
         total_size_before = 0
         total_size_after = 0
 
         paths = walkdir.file_paths(walkdir.filtered_walk(str(self.path),
-            depth=0, included_files=['*.jpg', '*.jpeg'],
+            included_files=['*.jpg', '*.jpeg'],
             excluded_dirs=self.excludes))
-
+        
         for path in paths:
+            if self.max_time and time() > self.max_time:
+                self.log.info('maximum execution time exceeded, exiting.')
+                break
             img = Path(path)
             stat = img.stat()
             optimized_at = self.get_optimized_at(path) or 0
@@ -152,10 +175,9 @@ class OptimizeImage:
             self.log.debug("processing %s (filesize=%d)", path, size_before)
             total_size_before += size_before
             try:
-                output = subprocess.check_output([self.compressor] +
-                                                 self.compressor_args.format(image=path).split())
-            except subprocess.CalledProcessError:
-                self.log.warn("failed compressor on %s", path)
+                output = self.compress(img)
+            except Exception as e:
+                self.log.warn("failed optimization on %s (%s)", path, (e))
                 total_size_after += size_before
                 continue
             size_after = len(output)

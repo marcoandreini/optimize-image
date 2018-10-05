@@ -22,15 +22,16 @@ import os
 import walkdir
 import fasteners
 import pyguetzli
+import xattr
 
 from time import time
 from pathlib import Path
-from xattr import getxattr, setxattr
 from atomicwrites import atomic_write
 from pwd import getpwnam
 from grp import getgrnam
 
-OPTIMIZED_AT = "user.optimized_at"
+# user xattr
+OPTIMIZED_AT = "optimized_at"
 
 class OptimizeImage:
 
@@ -114,12 +115,12 @@ class OptimizeImage:
 
     @staticmethod
     def set_optimized_at(filename):
-        setxattr(filename, OPTIMIZED_AT, '%3.f' % time())
+        xattr.set(filename, OPTIMIZED_AT, ('%3.f' % time()).encode(), namespace=xattr.NS_USER)
 
     @staticmethod
     def get_optimized_at(filename):
         try:
-            return float(getxattr(filename, OPTIMIZED_AT))
+            return float(xattr.get(filename, OPTIMIZED_AT, namespace=xattr.NS_USER))
         except OSError:
             return None
         

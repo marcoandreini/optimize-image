@@ -180,6 +180,8 @@ class OptimizeImage:
             except Exception as e:
                 self.log.warn("failed optimization on %s (%s)", path, (e))
                 total_size_after += size_before
+                # multiple warning avoided
+                self.set_optimized_at(path)
                 continue
             size_after = len(output)
             if stat.st_size <= size_after:

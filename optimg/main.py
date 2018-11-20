@@ -115,12 +115,12 @@ class OptimizeImage:
 
     @staticmethod
     def set_optimized_at(filename):
-        xattr.set(filename, OPTIMIZED_AT, ('%3.f' % time()).encode(), namespace=xattr.NS_USER)
+        xattr.set(str(filename), OPTIMIZED_AT, ('%3.f' % time()).encode(), namespace=xattr.NS_USER)
 
     @staticmethod
     def get_optimized_at(filename):
         try:
-            return float(xattr.get(filename, OPTIMIZED_AT, namespace=xattr.NS_USER))
+            return float(xattr.get(str(filename), OPTIMIZED_AT, namespace=xattr.NS_USER))
         except OSError:
             return None
         
@@ -135,8 +135,8 @@ class OptimizeImage:
                 input = f.read()
                 return pyguetzli.process_jpeg_bytes(input)
         else:
-            return subprocess.check_output([self.compressor] +
-                                           self.compressor_args.format(image=path).split())
+            return subprocess.check_output([str(self.compressor)] +
+                                           self.compressor_args.format(image=str(path)).split())
 
     def run(self):
         
